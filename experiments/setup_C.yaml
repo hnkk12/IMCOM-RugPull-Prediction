@@ -1,0 +1,11 @@
+# C: fixed early window + temporal split with purge -> realistic early-detection performance
+extends: common.yaml
+name: C
+features: [repo, new]
+split:
+  kind: temporal
+  train_end: "2022-01-01"   # train: t0 <  2022-01-01 (and label horizon ends before it)
+  val_end: "2022-07-01"     # val:   2022-01-01 <= t0 < 2022-07-01
+  test_end: null            # test:  t0 >= 2022-07-01
+  purge: true
+train: {shap: true}

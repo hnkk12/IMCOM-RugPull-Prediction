@@ -1,0 +1,5 @@
+# Robustness: setup D evaluated only on creators never seen in training
+extends: setup_D.yaml
+name: D_coldstart
+split: {drop_seen_creators: true}
+train: {shap: false}

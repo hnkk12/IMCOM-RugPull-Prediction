@@ -1,0 +1,5 @@
+# B: fixed early window [t0, t0+N] + random split (optimistic: same scam waves on both sides)
+extends: common.yaml
+name: B
+features: [repo, new]
+split: {kind: random, val_size: 0.15, test_size: 0.15}

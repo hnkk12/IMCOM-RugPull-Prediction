@@ -1,0 +1,13 @@
+.venv/
+__pycache__/
+*.pyc
+.env
+data/raw/
+data/processed/
+data/synthetic/
+results/
+*.parquet
+# baseline data/code is not ours to redistribute - see baseline/NOTICE.md
+baseline/*
+!baseline/run_setup_a.py
+!baseline/NOTICE.md

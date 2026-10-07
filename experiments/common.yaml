@@ -1,0 +1,44 @@
+# Shared settings for every setup. Setup files override keys via `extends`.
+
+bigquery:
+  project: rugpull-nckh     # null -> env GOOGLE_CLOUD_PROJECT
+  dataset: rugpull         # your own dataset (created if missing)
+  location: US
+  max_gb_per_query: 300    # dry-run guard; pass --yes to exceed it
+
+etherscan:                 # free crawler (src/etherscan_fetch.py)
+  sample_per_month: 600    # pools kept per month after the token-age filter
+  oversample: 1.6          # candidates per month before that filter
+  seed: 42
+  calls_per_sec: 4.5       # free tier allows 5/s; rate-limit replies are retried
+  workers: 16              # parallel requests (latency-bound; rate limit is shared)
+
+study:
+  start: "2020-10-01"      # pairs created in [start, end)
+  end: "2024-01-01"
+  max_token_age_days: 7    # token deployed <= 7 days before its WETH pair ("new token")
+  pool_horizon_days: 45    # how far Sync/Mint/Burn/Swap are fetched after pair creation
+  feature_horizon_days: 3  # how far Transfer/LP events are fetched (must cover t0 + max N)
+  data_cutoff: null        # last timestamp you trust in BigQuery (null = now)
+
+label:
+  drop_threshold: 0.99     # a single burn/swap removes >= 99% of the WETH reserve
+  mev_factor: 5.0          # swap-rug only if token_in > 5x initial token liquidity
+  min_pre_reserve_eth: 0.0 # ignore drops from reserves smaller than this
+  cumulative: false        # ablation: also flag reserve < 1% of running max within cum_window_h
+  cum_window_h: 1
+  H_days: 30               # prediction horizon after t0 + N
+  min_init_weth: 0.1       # drop dust pools (initial liquidity < 0.1 ETH)
+
+windows_hours: [1, 6, 24]
+
+paths:
+  raw: data/raw
+  processed: data/processed
+  results: results
+
+train:
+  seed: 42
+  models: [lgbm, xgb, logreg]
+  shap: false
+  shap_sample: 5000

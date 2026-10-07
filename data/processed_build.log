@@ -1,0 +1,12 @@
+pairs=23,400 events=24,886,580 contracts=23,400
+N=1h: 14,099 pools, positive rate 0.585
+N=6h: 11,390 pools, positive rate 0.496
+N=24h: 8,900 pools, positive rate 0.381
+              N=1h   N=6h  N=24h
+status                          
+pos           8246   5645   3389
+early_rug     7946  10653  13145
+neg           5853   5745   5511
+no_liquidity   803    803    803
+dust           525    525    525
+censored        27     29     27
