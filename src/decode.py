@@ -33,10 +33,39 @@ def load_raw(raw_dir: Path) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     return pairs, events, contracts
 
 
-def decode(events: pd.DataFrame, pairs: pd.DataFrame) -> dict[str, pd.DataFrame]:
-    ev = events.sort_values(ORDER, kind="stable")
+def load_metadata(raw_dir: Path) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Load the small pair/contract tables without materializing all raw events."""
+    pairs = pd.read_parquet(raw_dir / "pairs.parquet")
+    for c in ["created_ts", "token_deployed_ts"]:
+        pairs[c] = to_unix(pairs[c])
+    cpath = raw_dir / "contracts.parquet"
+    contracts = pd.read_parquet(cpath) if cpath.exists() else pd.DataFrame(columns=["token"])
+    return pairs, contracts
 
-    pool = ev[ev.role == "pool"].rename(columns={"address": "pair"})
+
+def load_decoded(raw_dir: Path, pairs: pd.DataFrame) -> dict[str, pd.DataFrame]:
+    """Decode monthly parquet files incrementally to keep peak memory bounded."""
+    chunks: dict[str, list[pd.DataFrame]] = {k: [] for k in ("pool_ev", "lp_tr", "tok_tr", "own_ev")}
+    files = sorted((raw_dir / "events").glob("*.parquet"))
+    if not files:
+        raise FileNotFoundError(f"no event parquet files under {raw_dir / 'events'}")
+    for f in files:
+        part = decode(pd.read_parquet(f), pairs)
+        for key in chunks:
+            chunks[key].append(part[key])
+    out = {}
+    for key, frames in chunks.items():
+        out[key] = pd.concat(frames, ignore_index=True)
+        frames.clear()
+    return out
+
+
+def decode(events: pd.DataFrame, pairs: pd.DataFrame) -> dict[str, pd.DataFrame]:
+    # Sorting happens once, in-place, when feature indexes are built. Avoiding a
+    # whole-table sort here materially lowers peak RAM for the 25M-event dataset.
+    ev = events
+
+    pool = ev[ev.role == "pool"].rename(columns={"address": "pair"}, copy=False)
     pool = pool.merge(pairs[["pair", "token_is_token0"]], on="pair", how="inner")
     t0 = pool.token_is_token0.to_numpy()
     # WETH is token1 when the token is token0

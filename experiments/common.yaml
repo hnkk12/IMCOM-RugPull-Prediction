@@ -42,3 +42,6 @@ train:
   models: [lgbm, xgb, logreg]
   shap: false
   shap_sample: 5000
+  bootstrap_samples: 1000
+  save_models: true
+  calibration_plots: true

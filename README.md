@@ -4,7 +4,8 @@ Dự đoán một token mới trên Uniswap V2 (cặp với WETH) có bị rug p
 chỉ dựa trên dữ liệu on-chain của **N giờ đầu** sau khi pool có thanh khoản (N ∈ {1, 6, 24}).
 
 Thông điệp chính của project: protocol kiểu cũ (feature tính trên toàn bộ vòng đời + random split, Setup A)
-cho ra con số ảo. Setup C (cửa sổ cố định + temporal split) mới phản ánh hiệu năng thực tế của early detection.
+cho kết quả lạc quan do leakage. Setup `C_no_token_accounting` (cửa sổ cố định + temporal split + 47 feature sạch)
+mới là protocol báo cáo chính cho hiệu năng thực tế của early detection.
 
 ## Cấu trúc
 
@@ -34,7 +35,7 @@ results/             metrics.csv, SHAP, summary.csv cho từng setup
 ```powershell
 py -3.12 -m venv .venv
 .venv\Scripts\python -m pip install -r requirements.txt
-.venv\Scripts\python -m pytest            # 14 test, gồm test chống leakage
+.venv\Scripts\python -m pytest            # 23 test, gồm leakage/censoring/accounting/audit
 ```
 
 ## Quy trình
@@ -96,13 +97,34 @@ Mọi query đều dry-run trước. Query nào quét quá `max_gb_per_query` th
 - `contract` (Setup D): cờ hàm nguy hiểm (mint, blacklist, setBots, setFee, pause, openTrading...)
   lấy từ `function_sighashes`, kích thước bytecode, số lần template bytecode đã được dùng trước đó.
 
+Tám feature token holder phụ thuộc vào ledger `Transfer` đầy đủ. Pipeline đặt chúng thành `NaN` khi balance/supply
+không khớp; vì 29,7–37,1% pool gặp vấn đề này, các setup chính dùng nhóm `robust` 47 feature và loại cả tám cột
+để missingness không vô tình trở thành tín hiệu dự đoán.
+
 ### Bước 5: Train các setup
 ```powershell
-.venv\Scripts\python -m src.train --config experiments/setup_B.yaml   # cửa sổ cố định + random split
-.venv\Scripts\python -m src.train --config experiments/setup_C.yaml   # cửa sổ cố định + temporal split (+SHAP)
-.venv\Scripts\python -m src.train --config experiments/setup_D.yaml   # C + feature contract
+.venv\Scripts\python -m src.train --config experiments/setup_B_no_token_accounting.yaml   # random split sạch
+.venv\Scripts\python -m src.train --config experiments/setup_C_no_token_accounting.yaml   # temporal chính (+SHAP)
+.venv\Scripts\python -m src.train --config experiments/setup_D_no_token_accounting.yaml   # C sạch + contract
 .venv\Scripts\python -m src.train --config experiments/setup_C_repo_only.yaml   # ablation
 .venv\Scripts\python -m src.train --config experiments/setup_D_coldstart.yaml   # chỉ creator chưa từng thấy
+.venv\Scripts\python -m src.train --config experiments/setup_C_common.yaml      # cùng cohort ở cả 1/6/24h
+.venv\Scripts\python -m src.train --config experiments/setup_C_rolling.yaml     # 4 temporal fold
+.venv\Scripts\python -m src.train --config experiments/setup_D_template_coldstart.yaml
+.venv\Scripts\python -m src.build_dataset --config experiments/setup_C_label95.yaml --jobs 8
+.venv\Scripts\python -m src.train --config experiments/setup_C_label95.yaml
+.venv\Scripts\python -m src.build_dataset --config experiments/setup_C_cumulative99.yaml --jobs 8
+.venv\Scripts\python -m src.train --config experiments/setup_C_cumulative99.yaml
+
+# robustness / paper artifacts
+.venv\Scripts\python -m src.leakage_probe
+.venv\Scripts\python -m src.operational_eval
+.venv\Scripts\python -m src.label_sensitivity
+.venv\Scripts\python -m src.sample_label_audit
+.venv\Scripts\python -m src.label_audit_report --allow-incomplete
+.venv\Scripts\python -m src.data_quality
+.venv\Scripts\python -m src.paper_artifacts
+.venv\Scripts\python -m src.reproducibility
 ```
 Kết quả gồm ROC-AUC, **PR-AUC** (metric chính, vì dữ liệu lệch lớp), F1/precision/recall ở ngưỡng chọn trên tập val,
 và Brier score, ghi ra `results/setup_*/metrics.csv` và `results/summary.csv`.
@@ -111,7 +133,7 @@ và Brier score, ghi ra `results/setup_*/metrics.csv` và `results/summary.csv`.
 ```powershell
 .venv\Scripts\python -m tests.synthetic
 .venv\Scripts\python -m src.build_dataset --data-root data/synthetic
-.venv\Scripts\python -m src.train --config experiments/setup_C.yaml --data-root data/synthetic
+.venv\Scripts\python -m src.train --config experiments/setup_C_no_token_accounting.yaml --data-root data/synthetic
 ```
 Dữ liệu giả lập cố ý tách lớp rất rõ (AUC ≈ 1). Lần chạy này chỉ để kiểm tra pipeline chạy thông, đừng báo cáo con số này.
 
@@ -119,4 +141,7 @@ Dữ liệu giả lập cố ý tách lớp rất rõ (AUC ≈ 1). Lần chạy 
 - Split temporal mặc định: train có t₀ < 2022-01-01, val từ 2022-01 đến 2022-06, test từ 2022-07 trở đi.
   Purge sẽ bỏ các mẫu train có horizon nhãn chồng sang giai đoạn val.
 - `LP_LOCKERS` trong `src/constants.py` mới có Unicrypt và Team.Finance. Nên kiểm tra lại trên Etherscan và bổ sung thêm.
-- GNN trên transaction graph và Slither (cần source đã verify) là bước mở rộng sau, chưa nằm trong pipeline này.
+- GNN trên transaction graph và Slither là mở rộng tùy chọn; protocol leakage-resistant,
+  label validation và temporal robustness là ưu tiên trước khi mở rộng model.
+- Hồ sơ chuẩn bị viết paper nằm trong `paper/`; baseline Setup A chỉ được trích như software artifact,
+  vì chưa xác minh được một publication/DOI đi kèm repository gốc.

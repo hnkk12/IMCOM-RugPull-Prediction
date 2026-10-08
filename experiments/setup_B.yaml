@@ -1,4 +1,4 @@
-# B: fixed early window [t0, t0+N] + random split (optimistic: same scam waves on both sides)
+# Legacy full-feature B; the paper-facing random setup is setup_B_no_token_accounting.yaml.
 extends: common.yaml
 name: B
 features: [repo, new]

@@ -27,6 +27,7 @@ import pandas as pd
 import requests
 
 from src import constants as C
+from src.artifacts import atomic_parquet, write_parquet_manifest
 from src.config import ROOT, load_config, resolve
 
 API = "https://api.etherscan.io/v2/api"
@@ -115,8 +116,10 @@ class Etherscan:
                 return out
             if page == MAX_PAGES:
                 last = int(res[-1]["blockNumber"], 16)
-                if last <= from_block:  # >10k logs in one block: give up on the rest of that block
-                    return out
+                if last <= from_block:
+                    raise RuntimeError(
+                        f"more than {PAGE * MAX_PAGES} logs in block {from_block}; "
+                        "refusing to silently export an incomplete event history")
                 out = [l for l in out if int(l["blockNumber"], 16) < last]
                 return out + self.logs(last, to_block, address, topic0)
             page += 1
@@ -246,7 +249,7 @@ def step_sample(es: Etherscan, cfg, raw: Path):
         "token_deployed_block": pick.token_deployed_block.astype("int64"), "token_creator": pick.token_creator,
         "cohort_date": pd.to_datetime(pick.ts, unit="s").dt.date,
     })
-    pairs.to_parquet(raw / "pairs.parquet")
+    atomic_parquet(pairs, raw / "pairs.parquet")
     print(f"sampled {len(pairs):,} pools; per month:\n{pick.month.value_counts().sort_index().to_string()}")
 
 
@@ -254,14 +257,15 @@ RPC_URL = "https://ethereum-rpc.publicnode.com"  # free public node: takes eth_g
 _rpc = threading.local()
 
 
-def rpc_get_code(address: str) -> str | None:
+def rpc_get_code(address: str, block: int | str = "latest") -> str | None:
     """Bytecode from a public RPC; None on any failure (caller falls back to Etherscan)."""
     if not hasattr(_rpc, "s"):
         _rpc.s = requests.Session()
     for attempt in range(3):
         try:
+            tag = hex(block) if isinstance(block, int) else block
             r = _rpc.s.post(RPC_URL, json={"jsonrpc": "2.0", "id": 1, "method": "eth_getCode",
-                                           "params": [address, "latest"]}, timeout=30).json()
+                                           "params": [address, tag]}, timeout=30).json()
             if isinstance(r.get("result"), str):
                 return r["result"]
         except (requests.RequestException, ValueError):
@@ -294,8 +298,15 @@ def _crawl_pool(es: Etherscan, p, s, cache: Path):
         r = log_row(l, "token")
         if r is not None and r["event"] in ("transfer", "ownership") and r["ts"] <= feat_end_ts:
             rows.append(r)
-    code = rpc_get_code(p.token) or es.get(module="proxy", action="eth_getCode", address=p.token, tag="latest")
-    (cache / f"{p.token}.code.json").write_text(json.dumps({"code": code or "0x"}))
+    block_tag = hex(int(p.created_block))
+    code = rpc_get_code(p.token, int(p.created_block))
+    historical = bool(code and code != "0x")
+    if not historical:
+        code = rpc_get_code(p.token) or es.get(module="proxy", action="eth_getCode",
+                                                    address=p.token, tag="latest")
+    (cache / f"{p.token}.code.json").write_text(json.dumps(
+        {"code": code or "0x", "requested_block": block_tag,
+         "code_at_prediction_time": historical}))
     df = pd.DataFrame(rows, columns=["address", "role", "ts", "block_number", "transaction_hash", "log_index",
                                      "event", "addr1", "addr2", "v0", "v1", "v2", "v3"])
     tmp = out.with_suffix(".tmp")
@@ -347,18 +358,22 @@ def step_export(cfg, raw: Path):
         frames.setdefault(month.get(f.stem, "unknown"), []).append(pd.read_parquet(f))
     for m, fs in frames.items():
         df = pd.concat(fs, ignore_index=True).drop_duplicates(["transaction_hash", "log_index", "role"])
-        df.to_parquet(ev_dir / f"{m}.parquet")
+        atomic_parquet(df, ev_dir / f"{m}.parquet")
         print(f"{m}: {len(df):,} events")
     rows = []
     for t in pairs.token.unique():
         f = cache / f"{t}.code.json"
         if not f.exists():
             continue
-        code = json.loads(f.read_text())["code"]
+        payload = json.loads(f.read_text())
+        code = payload["code"]
         rows.append(dict(token=t, function_sighashes=selectors_from_bytecode(code), is_erc20=True,
                          bytecode_size=max(len(code) - 2, 0) // 2,
-                         bytecode_hash=hashlib.sha256(code.encode()).hexdigest()))
-    pd.DataFrame(rows).to_parquet(raw / "contracts.parquet")
+                         bytecode_hash=hashlib.sha256(code.encode()).hexdigest() if code != "0x" else None,
+                         code_at_prediction_time=bool(payload.get("code_at_prediction_time", False))))
+    atomic_parquet(pd.DataFrame(rows), raw / "contracts.parquet")
+    write_parquet_manifest([raw / "pairs.parquet", raw / "contracts.parquet", *ev_dir.glob("*.parquet")],
+                           raw / "manifest.json", root=resolve("."))
     print(f"contracts: {len(rows):,}")
 
 

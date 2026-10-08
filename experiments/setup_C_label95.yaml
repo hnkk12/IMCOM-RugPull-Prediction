@@ -1,0 +1,7 @@
+# Label-rule sensitivity: a single Burn/Swap removes at least 95% of WETH.
+extends: setup_C.yaml
+name: C_label95
+features: [robust]
+label: {drop_threshold: 0.95, cumulative: false}
+paths: {processed: data/sensitivity/single95/processed}
+train: {models: [lgbm], shap: false}

@@ -17,6 +17,7 @@ import re
 from datetime import datetime, timezone
 
 from src import constants as C
+from src.artifacts import write_parquet_manifest
 from src.config import ROOT, load_config, resolve
 
 SQL_DIR = ROOT / "data" / "sql"
@@ -122,6 +123,8 @@ def export(bqc: BQ, raw_dir):
             f"WHERE DATE_TRUNC(cohort_date, MONTH) = DATE '{m:%Y-%m-%d}'").result().to_arrow()
         pq.write_table(tbl, out)
         print(f"{out.name}: {tbl.num_rows:,} rows")
+    write_parquet_manifest([raw_dir / "pairs.parquet", raw_dir / "contracts.parquet", *ev_dir.glob("*.parquet")],
+                           raw_dir / "manifest.json", root=ROOT)
 
 
 def main():

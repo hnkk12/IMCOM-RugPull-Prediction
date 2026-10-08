@@ -1,4 +1,4 @@
-# C: fixed early window + temporal split with purge -> realistic early-detection performance
+# Legacy full-feature C; the paper-facing temporal setup is setup_C_no_token_accounting.yaml.
 extends: common.yaml
 name: C
 features: [repo, new]

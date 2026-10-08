@@ -1,0 +1,5 @@
+# Random-split counterpart of the recommended robust feature set.
+extends: setup_B.yaml
+name: B_no_token_accounting
+features: [robust]
+train: {models: [lgbm], shap: false}

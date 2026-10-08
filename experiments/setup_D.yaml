@@ -1,4 +1,4 @@
-# D: setup C + static contract features (function selectors, bytecode template reuse)
+# Legacy full-feature D; the paper-facing contract ablation is setup_D_no_token_accounting.yaml.
 extends: setup_C.yaml
 name: D
 features: [repo, new, contract]

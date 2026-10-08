@@ -1,0 +1,5 @@
+# Robustness to contract families never observed during training.
+extends: setup_D_no_token_accounting.yaml
+name: D_template_coldstart
+split: {drop_seen_templates: true}
+train: {models: [lgbm], shap: false}

@@ -1,0 +1,5 @@
+# Contract-feature increment over the recommended robust temporal setup.
+extends: setup_C_no_token_accounting.yaml
+name: D_no_token_accounting
+features: [robust, contract]
+train: {models: [lgbm], shap: false}

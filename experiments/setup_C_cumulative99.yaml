@@ -1,0 +1,7 @@
+# Label-rule sensitivity: default 99% rule plus cumulative depletion within one hour.
+extends: setup_C.yaml
+name: C_cumulative99
+features: [robust]
+label: {drop_threshold: 0.99, cumulative: true}
+paths: {processed: data/sensitivity/cumulative99/processed}
+train: {models: [lgbm], shap: false}

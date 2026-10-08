@@ -1,0 +1,12 @@
+# Expanding-window robustness across four chronological evaluation folds.
+extends: setup_C_no_token_accounting.yaml
+name: C_rolling
+split:
+  kind: rolling_temporal
+  purge: true
+  folds:
+    - {name: "2022H1", train_end: "2021-07-01", val_end: "2022-01-01", test_end: "2022-07-01"}
+    - {name: "2022H2", train_end: "2022-01-01", val_end: "2022-07-01", test_end: "2023-01-01"}
+    - {name: "2023H1", train_end: "2022-07-01", val_end: "2023-01-01", test_end: "2023-07-01"}
+    - {name: "2023H2", train_end: "2023-01-01", val_end: "2023-07-01", test_end: "2024-01-01"}
+train: {models: [lgbm], shap: false, bootstrap_samples: 500, save_models: false, calibration_plots: false}

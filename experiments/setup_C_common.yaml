@@ -1,0 +1,6 @@
+# Same pools at N=1/6/24, isolating the value of additional observation time
+# from survivor/cohort selection. This complements (not replaces) landmark Setup C.
+extends: setup_C_no_token_accounting.yaml
+name: C_common
+cohort: {common_across_windows: true}
+train: {models: [lgbm], shap: false}

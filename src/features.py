@@ -41,13 +41,23 @@ NEW_FEATURES = [
     "token_age_h", "owner_renounced", "n_owner_changes", "creator_is_lp_provider",
     "creator_prev_rugs",
 ]
+TOKEN_ACCOUNTING_FEATURES = [
+    "token_burned_share", "creator_token_share", "token_holder_count", "token_hhi",
+    "token_top1_share", "token_top10_share", "pair_token_share", "contract_self_share",
+]
+ROBUST_REPO_FEATURES = [c for c in REPO_FEATURES if c not in TOKEN_ACCOUNTING_FEATURES]
+ROBUST_FEATURES = [c for c in REPO_FEATURES + NEW_FEATURES if c not in TOKEN_ACCOUNTING_FEATURES]
 
 
 class _Index:
     """O(1) slicing of a table pre-sorted by (key, ts)."""
 
     def __init__(self, df: pd.DataFrame, key: str):
-        self.df = df.sort_values([key, "ts", "block_number", "log_index"], kind="stable").reset_index(drop=True)
+        if df.attrs.get("index_sorted_by") != key:
+            df.sort_values([key, "ts", "block_number", "log_index"], kind="stable",
+                           inplace=True, ignore_index=True)
+            df.attrs["index_sorted_by"] = key
+        self.df = df
         keys, start = np.unique(self.df[key].to_numpy(), return_index=True)
         end = np.r_[start[1:], len(self.df)]
         self.pos = {k: (s, e) for k, s, e in zip(keys, start, end)}
@@ -181,16 +191,22 @@ def extract_features(p: PoolData, t0: int, n_hours: float) -> dict:
     minted_all = float(val[frm == ZERO].sum())
     minted_post = float(val[(frm == ZERO) & (tk.ts.to_numpy() > t0)].sum())
     tb = _balances(tk)
-    supply = minted_all - float(tb.get(ZERO, 0.0))
-    if supply > 0:
+    burned_balance = max(float(tb.get(ZERO, 0.0)), 0.0) + max(float(tb.get(DEAD, 0.0)), 0.0)
+    supply = minted_all - burned_balance
+    live_balances = tb.drop(labels=list(BURN_ADDRESSES), errors="ignore")
+    tolerance = max(abs(supply) * 1e-6, 1e-6)
+    accounting_valid = (supply > 0 and (live_balances >= -tolerance).all()
+                        and abs(float(live_balances.sum()) - supply) <= tolerance)
+    f["token_accounting_valid"] = int(accounting_valid)
+    if accounting_valid:
         circ = tb.drop(labels=list(BURN_ADDRESSES) + [p.pair, p.token], errors="ignore")
         circ = circ[circ > 0]
         top = np.sort(circ.to_numpy())[::-1]
         f.update(token_holder_count=int(circ.size), token_hhi=_hhi(circ.to_numpy()),
                  token_top1_share=float(top[:1].sum() / supply), token_top10_share=float(top[:10].sum() / supply),
-                 pair_token_share=float(tb.get(p.pair, 0.0) / supply),
+                 pair_token_share=float(max(tb.get(p.pair, 0.0), 0.0) / supply),
                  contract_self_share=float(max(tb.get(p.token, 0.0), 0.0) / supply),
-                 token_burned_share=float((tb.get(ZERO, 0.0) + max(tb.get(DEAD, 0.0), 0.0)) / max(minted_all, EPS)),
+                 token_burned_share=float(burned_balance / max(minted_all, EPS)),
                  creator_token_share=float(max(tb.get(creator, 0.0), 0.0) / supply) if creator else np.nan)
     else:
         f.update(token_holder_count=np.nan, token_hhi=np.nan, token_top1_share=np.nan,

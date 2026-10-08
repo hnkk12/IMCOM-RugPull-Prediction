@@ -1,5 +1,5 @@
 # Ablation: only the windowed baseline features under the realistic protocol
-extends: setup_C.yaml
+extends: setup_C_no_token_accounting.yaml
 name: C_repo_only
-features: [repo]
+features: [repo_robust]
 train: {shap: false}

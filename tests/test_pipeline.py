@@ -6,10 +6,15 @@ import pandas as pd
 import pytest
 
 from src.bq_fetch import hexf, render
+from src.contract_features import contract_features
+from src.constants import ZERO
 from src.decode import decode, to_unix
-from src.features import PoolData, _Index, build_features, extract_features
+from src.features import (ROBUST_REPO_FEATURES, TOKEN_ACCOUNTING_FEATURES, PoolData, _Index,
+                          build_features, extract_features)
 from src.label import assign_labels, detect_rugs
-from src.split import temporal_split
+from src.label_audit_report import build_report
+from src.split import make_split, temporal_split
+from src.train import best_threshold, evaluate
 from tests.synthetic import make_raw
 
 HOUR, DAY = 3600, 86400
@@ -66,6 +71,35 @@ def test_label_statuses(data):
     assert (cens.status.isin(["censored", "early_rug", "dust", "no_liquidity", "pos"])).all()
 
 
+def test_observed_positive_is_not_censored():
+    """An observed event is positive even when the full negative follow-up is unavailable."""
+    t0 = 1_700_000_000
+    pairs = pd.DataFrame({"pair": ["p"], "token": ["t"], "created_ts": [t0],
+                          "token_creator": ["c"]})
+    rugs = pd.DataFrame({"pair": ["p"], "t0": [t0], "init_tok": [1.0], "init_weth": [1.0],
+                         "rug_ts": [t0 + 2 * DAY], "rug_type": ["burn"], "rug_drop": [0.999]})
+    lab = assign_labels(rugs, pairs, n_hours=1, h_days=30, pool_horizon_days=45,
+                        data_cutoff=t0 + 3 * DAY, min_init_weth=0.1)
+    assert lab.status.iloc[0] == "pos"
+
+
+def test_exact_drop_threshold_survives_float_roundoff():
+    pair, tx0, tx1 = "p", "init", "rug"
+    ev = pd.DataFrame([
+        {"pair": pair, "ts": 1, "block_number": 1, "log_index": 1, "tx": tx0,
+         "event": "sync", "weth": 1.0, "tok": 100.0, "tok_in": np.nan},
+        {"pair": pair, "ts": 1, "block_number": 1, "log_index": 2, "tx": tx0,
+         "event": "mint", "weth": 1.0, "tok": 100.0, "tok_in": np.nan},
+        {"pair": pair, "ts": 2, "block_number": 2, "log_index": 1, "tx": tx1,
+         "event": "sync", "weth": 0.010000000000000009, "tok": 1.0, "tok_in": np.nan},
+        {"pair": pair, "ts": 2, "block_number": 2, "log_index": 2, "tx": tx1,
+         "event": "burn", "weth": 0.99, "tok": 99.0, "tok_in": np.nan},
+    ])
+    out = detect_rugs(ev)
+    assert out.rug_type.iloc[0] == "burn"
+    assert out.rug_drop.iloc[0] == pytest.approx(0.99)
+
+
 @pytest.mark.parametrize("n_hours", [1, 6, 24])
 def test_features_ignore_the_future(data, n_hours):
     """Core leakage test: features must not change when events after t0+N are deleted."""
@@ -112,6 +146,58 @@ def test_temporal_split_purge():
     assert len(va) == 1 and len(te) == 1
 
 
+def test_template_coldstart_removes_seen_contract_family():
+    t = pd.Timestamp("2022-01-01", tz="UTC").timestamp()
+    df = pd.DataFrame({"t0": [t - 60 * DAY, t + DAY, t + 200 * DAY, t + 201 * DAY],
+                       "t_end": [t - 60 * DAY, t + DAY, t + 200 * DAY, t + 201 * DAY],
+                       "y": [0, 1, 0, 1], "bytecode_hash": ["seen", "val", "seen", "new"]})
+    spec = {"kind": "temporal", "train_end": "2022-01-01", "val_end": "2022-07-01",
+            "purge": False, "drop_seen_templates": True}
+    _, _, te = make_split(df, spec, h_days=30, seed=42)
+    assert te.bytecode_hash.tolist() == ["new"]
+
+
+def test_empty_bytecode_is_not_counted_as_reused_template():
+    contracts = pd.DataFrame({"token": ["a", "b", "c"], "function_sighashes": [[], [], []],
+                              "bytecode_size": [0, 0, 10], "bytecode_hash": [None, None, "hash"]})
+    pairs = pd.DataFrame({"token": ["a", "b", "c"], "created_ts": [1, 2, 3]})
+    out = contract_features(contracts, pairs).set_index("token")
+    assert out.loc[["a", "b"], "bytecode_dup_count"].isna().all()
+    assert out.loc[["a", "b"], "bytecode_missing"].eq(1).all()
+    assert out.loc["c", "bytecode_dup_count"] == 0
+
+
+def test_threshold_and_extended_metrics():
+    y = np.array([0, 0, 1, 1])
+    p = np.array([0.1, 0.4, 0.6, 0.9])
+    threshold = best_threshold(y, p)
+    r = evaluate(y, p, threshold)
+    assert r["f1"] == 1 and r["tn"] == 2 and r["tp"] == 2
+    assert 0 <= r["ece"] <= 1 and r["pr_baseline"] == 0.5
+
+
+def test_invalid_token_accounting_becomes_missing(data):
+    assert not set(ROBUST_REPO_FEATURES) & set(TOKEN_ACCOUNTING_FEATURES)
+    pairs, tables, rugs, _ = data
+    pair = rugs.pair.iloc[0]
+    meta = pairs.set_index("pair").loc[pair]
+    t0 = int(rugs.set_index("pair").loc[pair, "t0"])
+    bad = tables["tok_tr"][tables["tok_tr"].token.eq(meta.token)].copy()
+    if bad.empty:
+        pytest.skip("synthetic token has no transfers")
+    spend = bad.index[bad.frm.ne(ZERO)]
+    if not len(spend):
+        pytest.skip("synthetic token has no non-mint transfer")
+    bad.loc[spend[0], "value"] = 1e100
+    p = PoolData(pair, meta.token, int(meta.created_ts), int(meta.token_deployed_ts), meta.token_creator,
+                 tables["pool_ev"][tables["pool_ev"].pair.eq(pair)],
+                 tables["lp_tr"][tables["lp_tr"].pair.eq(pair)], bad,
+                 tables["own_ev"][tables["own_ev"].token.eq(meta.token)])
+    f = extract_features(p, t0, 1)
+    assert f["token_accounting_valid"] == 0
+    assert pd.isna(f["token_top1_share"]) and pd.isna(f["pair_token_share"])
+
+
 def test_etherscan_parsing():
     from src.constants import TOPIC_SWAP
     from src.etherscan_fetch import log_row, selectors_from_bytecode
@@ -131,3 +217,20 @@ def test_to_unix_any_resolution():
     for unit in ["ns", "us", "s"]:
         col = pd.Series(pd.to_datetime([1_650_000_000], unit="s", utc=True)).astype(f"datetime64[{unit}, UTC]")
         assert to_unix(col).iloc[0] == 1_650_000_000
+
+
+def test_label_audit_report_handles_blinding_and_adjudication():
+    master = pd.DataFrame({"audit_id": ["a", "b", "c"],
+                           "audit_group": ["rug_burn", "rug_swap", "no_detected_rug"],
+                           "pair": ["p1", "p2", "p3"], "token": ["t1", "t2", "t3"],
+                           "adjudicated_label": ["", "rug", ""]})
+    r1 = pd.DataFrame({"audit_id": ["c", "a", "b"],
+                       "reviewer_label": ["not_rug", "rug", "not_rug"]})
+    r2 = pd.DataFrame({"audit_id": ["b", "c", "a"],
+                       "reviewer_label": ["rug", "not_rug", "rug"]})
+    report, strata, disagreements = build_report(
+        master, r1, r2, {"rug_burn": 10, "rug_swap": 10, "no_detected_rug": 20})
+    assert report["double_reviewed_n"] == 3
+    assert report["unresolved_disagreements_n"] == 0
+    assert report["detected_label_precision_population_weighted"] == 1.0
+    assert len(disagreements) == 1 and len(strata) == 3

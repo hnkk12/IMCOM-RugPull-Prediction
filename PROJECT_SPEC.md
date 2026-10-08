@@ -1,6 +1,6 @@
 # Đặc tả dự án: Phát hiện sớm rug pull trên Uniswap V2
 
-> Cập nhật: 07/10/2026. File này mô tả toàn bộ dự án: mục tiêu, dữ liệu, phương pháp, cách chạy và kết quả hiện có.
+> Cập nhật: 08/10/2026. File này mô tả toàn bộ dự án: mục tiêu, dữ liệu, phương pháp, cách chạy và kết quả hiện có.
 
 ---
 
@@ -11,8 +11,8 @@
 | **Bài toán** | Với một token mới vừa có pool thanh khoản WETH trên Uniswap V2, chỉ dùng dữ liệu on-chain trong **N giờ đầu** (N ∈ {1, 6, 24}), dự đoán pool có bị **rug pull trong 30 ngày tiếp theo** hay không. |
 | **Lĩnh vực** | Data mining, pattern recognition, blockchain security |
 | **Dạng bài toán** | Phân loại nhị phân trên dữ liệu bảng, theo thời gian, lệch lớp |
-| **Đóng góp chính** | (1) Chứng minh baseline cũ (feature tính trên toàn vòng đời + random split) bị **leakage** nên cho kết quả ảo. (2) Đề xuất protocol phát hiện sớm không leakage: cửa sổ cố định, nhãn có censoring, temporal split có purge. (3) Tự xây dataset 23.400 pool từ dữ liệu on-chain thô. (4) Đo được cái giá của việc phát hiện sớm: rất nhiều vụ rug xảy ra trước t₀+N. |
-| **Baseline** | Repo công khai `kangmyoungseok/RugPull_Prediction_AI` (KITRI BoB 2021, bài IMCOM). Phải trích dẫn khi viết paper. Xem `baseline/NOTICE.md`. |
+| **Đóng góp chính** | (1) Chứng minh baseline cũ (feature tính trên toàn vòng đời + random split) bị **leakage** nên kết quả lạc quan. (2) Đề xuất protocol phát hiện sớm không leakage: cửa sổ cố định, nhãn có censoring, temporal split có purge. (3) Tự xây dataset 23.400 pool từ dữ liệu on-chain thô. (4) Đo được cái giá của việc phát hiện sớm: rất nhiều vụ rug xảy ra trước t₀+N. |
+| **Baseline** | Software artifact công khai `kangmyoungseok/RugPull-Prediction-AI` (KITRI BoB 2021). Chưa xác minh được paper/DOI đi kèm và không có bằng chứng về liên hệ với IMCOM; chỉ trích repository cho Setup A. Xem `baseline/NOTICE.md`. |
 
 ---
 
@@ -53,7 +53,7 @@ IMCOM-RugPull-Prediction/
 │  ├─ build_dataset.py      raw -> processed
 │  └─ train.py              train + đánh giá + SHAP
 ├─ experiments/             common.yaml, setup_B/C/D.yaml, ablation
-├─ tests/                   16 test (gồm test chống leakage) + dữ liệu giả lập
+├─ tests/                   23 test (leakage, censoring, split, bytecode, accounting, audit) + dữ liệu giả lập
 └─ results/                 metrics, dự đoán, SHAP, summary.csv
 ```
 
@@ -109,15 +109,18 @@ Crawler có cache nên chạy lại vẫn tiếp tục được, chạy 16 luồ
 
 | Trạng thái | N = 1h | N = 6h | N = 24h |
 |---|---|---|---|
-| pos | 8.246 | 5.645 | 3.389 |
-| neg | 5.853 | 5.745 | 5.511 |
-| **early_rug** | **7.946** | **10.653** | **13.145** |
+| pos | 8.659 | 6.080 | 3.916 |
+| neg | 5.444 | 5.314 | 4.975 |
+| **early_rug** | **7.953** | **10.660** | **13.161** |
 | no_liquidity | 803 | 803 | 803 |
 | dust | 525 | 525 | 525 |
-| censored | 27 | 29 | 27 |
-| **Dataset** | **14.099** (58,5% rug) | **11.390** (49,6% rug) | **8.900** (38,1% rug) |
+| censored | 16 | 18 | 20 |
+| **Dataset** | **14.103** (61,4% rug) | **11.394** (53,4% rug) | **8.891** (44,0% rug) |
 
-- Có 17.304/22.597 pool có thanh khoản bị rug trong 45 ngày (**76,6%**). Trong đó 15.517 vụ qua Burn (rút LP) và 1.787 vụ qua Swap (dump token).
+Các số trên đã áp dụng quy tắc censoring đúng cho event dương: nếu rug đã được quan sát trong target
+window thì mẫu là `pos` ngay cả khi chưa theo dõi đủ toàn bộ follow-up cần thiết để kết luận một mẫu âm.
+
+- Có 18.161/22.597 pool có thanh khoản bị rug trong 45 ngày (**80,4%**). Trong đó 16.374 vụ qua Burn (rút LP) và 1.787 vụ qua Swap (dump token). So sánh ngưỡng dùng tolerance `1e-12` để các trường hợp giảm đúng 99% không bị loại do sai số float.
 - Khoảng **35% số pool có thanh khoản đã rug ngay trong giờ đầu**, và khoảng 58% trong 24 giờ đầu. Đây là giới hạn cố hữu của phát hiện sớm.
 
 ---
@@ -149,10 +152,19 @@ Crawler có cache nên chạy lại vẫn tiếp tục được, chạy 16 luồ
 - **Độ tập trung token:** `token_holder_count`, `token_hhi`, `token_top1_share`, `token_top10_share`, `pair_token_share`, `contract_self_share`, `post_launch_mint_ratio`, `n_token_transfers`, `unique_token_receivers`
 - **Token và owner:** `token_age_h`, `owner_renounced`, `n_owner_changes`, `creator_is_lp_provider`, `creator_prev_rugs` (rug trước đó của cùng creator, chỉ tính rug xảy ra trước t₀+N)
 
-### 5.3 Nhóm `contract` (Setup D): 15 feature tĩnh
+### 5.3 Nhóm `contract` (Setup D): 16 feature tĩnh
 - 12 cờ hàm nguy hiểm: `fn_mint`, `fn_blacklist`, `fn_set_bots`, `fn_set_fee`, `fn_set_max_tx`, `fn_pause`, `fn_trading_switch`, `fn_exclude_from_fee`, `fn_cooldown`, `fn_owner`, `fn_renounce`, `fn_transfer_ownership`. Selector được tính bằng keccak từ chữ ký hàm.
-- `n_functions`, `bytecode_size`, `bytecode_dup_count` (số lần template bytecode này đã được deploy trước đó).
+- `n_functions`, `bytecode_size`, `bytecode_dup_count` (số lần template bytecode này đã được deploy trước đó)
+  và `bytecode_missing` (không lấy được code hợp lệ tại thời điểm dự đoán).
 - **Hạn chế:** selector được lấy xấp xỉ từ các opcode PUSH4 trong bytecode, chưa phải phân tích source.
+
+### 5.4 Kiểm soát token accounting
+
+Tám feature holder-share phụ thuộc vào việc tái dựng đầy đủ ledger ERC-20 từ event `Transfer`. Pipeline hiện kiểm tra
+balance âm và đối chiếu tổng balance sống với circulating supply; nếu sai, tám feature này được đặt `NaN` thay vì
+giữ các tỷ lệ vô lý. Có 4.195/14.103 (29,7%), 3.699/11.394 (32,5%) và 3.300/8.891 (37,1%) pool không qua kiểm tra
+ở N=1/6/24h. Vì mức thiếu không ngẫu nhiên có thể tự trở thành tín hiệu, **protocol chính dùng nhóm `robust` gồm 47
+feature và loại toàn bộ tám feature phụ thuộc token accounting**. Các setup đầy đủ chỉ còn là phân tích phụ.
 
 ---
 
@@ -163,22 +175,30 @@ Crawler có cache nên chạy lại vẫn tiếp tục được, chạy 16 luồ
 - **Temporal:** train có t₀ < 2022-01-01, val trong 2022-01-01 → 2022-07-01, test có t₀ ≥ 2022-07-01.
   **Purge** bỏ các mẫu train/val có horizon nhãn (t₀+N+H) vượt sang giai đoạn sau.
 - **Cold-start:** trên test, bỏ các pool có creator đã xuất hiện trong train.
+- **Template cold-start:** bỏ các pool test có bytecode template đã xuất hiện trong train.
+- **Common cohort:** giao của ba dataset N=1/6/24, dùng cùng pool để tách giá trị của thời gian quan sát
+  khỏi survivor-selection bias.
+- **Rolling temporal:** bốn fold test liên tiếp 2022H1, 2022H2, 2023H1 và 2023H2.
 
 ### 6.2 Các setup
 
 | Setup | Dữ liệu và feature | Split | Mục đích |
 |---|---|---|---|
-| **A** | Dataset_v1.9 của repo gốc, 18 feature toàn vòng đời | random 5-fold (+ temporal) | tái lập con số ảo, thử leakage |
-| **B** | cửa sổ cố định, `repo` + `new` | random | cho thấy random split vẫn lạc quan |
-| **C** | cửa sổ cố định, `repo` + `new` | temporal + purge | **hiệu năng thực tế** |
-| **D** | C + `contract` | temporal + purge | giá trị của feature contract |
-| C_repo_only | chỉ `repo` | temporal + purge | ablation: giá trị của feature mới |
-| D_coldstart | D | temporal, chỉ creator mới | creator chưa từng thấy |
+| **A** | Dataset_v1.9 của repo gốc, 18 feature toàn vòng đời | random 5-fold (+ temporal) | tái lập kết quả trước và thử leakage |
+| **B_no_token_accounting** | cửa sổ cố định, 47 feature `robust` | random | cho thấy random split vẫn lạc quan |
+| **C_no_token_accounting** | cửa sổ cố định, 47 feature `robust` | temporal + purge | **protocol chính / hiệu năng thực tế** |
+| **D_no_token_accounting** | C sạch + `contract` | temporal + purge | giá trị của feature contract |
+| C_repo_only | 16 feature `repo_robust` | temporal + purge | ablation: giá trị của feature mới |
+| D_coldstart / D_template_coldstart | D sạch | temporal, creator/template mới | kiểm tra học thuộc; kết quả phụ |
+| C_common | C sạch, cùng pool ở mọi N | temporal + purge | so sánh N không bị đổi cohort |
+| C_rolling | C sạch | 4 temporal fold + purge | độ bền theo thời gian |
 
 ### 6.3 Model và metric
 - **Model:** LightGBM, XGBoost (early stopping theo PR-AUC trên val), Logistic Regression (impute, signed-log, chuẩn hóa, class_weight balanced).
-- **Metric:** ROC-AUC, PR-AUC, F1/precision/recall ở ngưỡng tối ưu F1 trên **val** (dùng nguyên cho test), Brier score.
-- **Giải thích:** SHAP (TreeExplainer) cho LightGBM/XGBoost ở Setup C/D.
+- **Metric:** ROC-AUC, PR-AUC, F1/precision/recall/specificity/balanced accuracy ở ngưỡng tối ưu F1
+  trên **val** (dùng nguyên cho test), Brier score, ECE, confusion counts và stratified-bootstrap 95% CI.
+- **Giải thích:** SHAP (TreeExplainer) cho LightGBM của Setup C sạch; các full-feature setup cũ chỉ để chẩn đoán.
+- **Reproducibility:** lưu model, prediction, calibration curve, config, SHA-256 manifest và phiên bản môi trường.
 
 ---
 
@@ -201,37 +221,67 @@ Dataset gốc có 90% mẫu là rug, nên accuracy và PR-AUC ở đây bị đ�
 
 | Setup | N = 1h | N = 6h | N = 24h |
 |---|---|---|---|
-| B: random | 0.942 (0.960) | 0.941 (0.942) | 0.924 (0.891) |
-| **C: temporal** | **0.897 (0.882)** | **0.890 (0.825)** | **0.842 (0.661)** |
-| C_repo_only | 0.873 (0.836) | 0.850 (0.753) | 0.794 (0.579) |
-| D: C + contract | 0.904 (0.889) | 0.893 (0.835) | 0.843 (0.663) |
-| D_coldstart | 0.904 (0.889) | 0.893 (0.835) | 0.843 (0.664) |
+| B sạch: random | 0.919 (0.950) | 0.911 (0.928) | 0.878 (0.858) |
+| **C sạch: temporal** | **0.848 (0.860)** | **0.830 (0.796)** | **0.791 (0.653)** |
+| C_repo_only | 0.821 (0.823) | 0.790 (0.735) | 0.710 (0.567) |
+| D sạch: C + contract | 0.858 (0.868) | 0.834 (0.797) | 0.792 (0.659) |
+| D creator cold-start | 0.858 (0.868) | 0.834 (0.797) | 0.792 (0.660) |
+| D template cold-start | 0.858 (0.868) | 0.834 (0.797) | 0.792 (0.659) |
 
-**Tỉ lệ rug trong tập test** (cần báo cáo kèm PR-AUC): B 58,5% / 49,6% / 38,1%. C/D 44,7% / 32,9% / 23,5%.
+**Tỉ lệ rug trong tập test** (cần báo cáo kèm PR-AUC): B 61,4% / 53,3% / 44,1%. C/D 50,7% / 40,8% / 35,1%.
 
-**F1 ở Setup C (LightGBM):** 0.811 / 0.771 / 0.650. Kết quả chi tiết của cả 3 model nằm ở `results/summary.csv`.
+**F1 ở Setup C sạch (LightGBM):** 0.779 / 0.708 / 0.639. Kết quả chi tiết, CI, confusion counts,
+Brier và ECE nằm ở `results/summary.csv`.
 
-### 7.3 SHAP (Setup C, LightGBM): các feature quan trọng nhất
-- **N = 1h:** `n_sell`, `lp_top1_share`, `token_age_h`, `max_drawdown`, `init_weth`, `lp_creator_share`, `lp_hhi`, `buy_sell_rate`
-- **N = 6h:** `lp_top1_share`, `max_drawdown`, `n_sell`, `lp_hhi`, `init_weth`, `buy_sell_rate`, `token_age_h`
-- **N = 24h:** `lp_top1_share` (vượt trội), `buy_sell_rate`, `end_weth`, `lp_hhi`, `pair_token_share`, `n_token_transfers`
+### 7.3 Robustness mới
 
-### 7.4 Kết luận chính
-1. **Kết quả đi theo đúng thứ tự A (0.99) > B (0.94) > C (0.84–0.90).** Con số của baseline là ảo. Leakage đến từ việc cửa sổ tính feature phụ thuộc nhãn, và chỉ đổi split thì không khắc phục được.
-2. **Feature mới có ích:** C cao hơn C_repo_only, ROC-AUC tăng 0.02–0.05 và PR-AUC tăng 0.05–0.08.
-3. **Feature contract chỉ giúp rất ít** (khoảng +0.01 ROC-AUC). Có thể do cách lấy selector xấp xỉ.
-4. **Đánh đổi của phát hiện sớm:** N lớn thì có thêm thông tin, nhưng nhiều vụ rug đã xảy ra trước đó (early_rug tăng từ 7.946 lên 13.145) và model cũng đoán khó hơn trên phần còn lại.
+**Leakage probe trên cùng dataset mới.** Chỉ dùng độ dài cửa sổ phụ thuộc nhãn đã đạt ROC-AUC
+0,999/0,996/0,998 với random split và 0,972/0,992/0,986 với temporal split cho N=1/6/24h.
+Điều này cô lập leakage tốt hơn việc so trực tiếp Setup A và B trên hai dataset khác nhau.
+
+**Common cohort (8.891 pool có mặt ở cả ba N).** PR-AUC lần lượt là 0,531, 0,599 và 0,653.
+Do đó, trên cùng population, quan sát thêm thực sự có ích; hiệu năng giảm trong landmark C sạch chủ yếu phản ánh
+việc các rug dễ đã rời risk set trước các landmark muộn hơn.
+
+**Operational coverage trên temporal test:** tỷ lệ tối đa còn có thể bắt tại landmark là 37,5%/24,3%/17,3%;
+LightGBM thực tế bắt được 30,6%/16,7%/12,8% tổng số rug xảy ra trước hoặc trong target horizon.
+
+**Label sensitivity:** ngưỡng 95% thêm 398 rug so với 99%; ngưỡng 97,5% thêm 251;
+cumulative-99% thêm 371. Khi retrain LightGBM trên 47 feature sạch, single-95% đạt ROC-AUC 0,835/0,804/0,767
+và cumulative-99% đạt 0,847/0,822/0,771 tại N=1/6/24h, cho thấy kết luận định lượng nhạy với
+định nghĩa rug dù pattern temporal chính vẫn còn. Kết quả chi tiết nằm ở `results/label_sensitivity*.csv`
+và các setup `C_label95`, `C_cumulative99`.
+
+### 7.4 SHAP (Setup C sạch, LightGBM): các feature quan trọng nhất
+- **N = 1h:** `n_sell`, `token_age_h`, `init_weth`, `max_drawdown`, `lp_creator_share`, `lp_top1_share`, `buy_sell_rate`, `lp_hhi`
+- **N = 6h:** `lp_top1_share`, `buy_sell_rate`, `max_drawdown`, `n_sell`, `token_age_h`, `init_weth`, `unique_token_receivers`, `lp_hhi`
+- **N = 24h:** `lp_top1_share` (vượt trội), `buy_sell_rate`, `swap_mean_offset`, `end_weth`, `unique_token_receivers`, `n_token_transfers`, `reserve_change`
+
+### 7.5 Kết luận chính
+1. **Baseline bị lạc quan do cửa sổ phụ thuộc nhãn.** Không diễn giải chênh lệch A/B như một hiệu ứng nhân quả
+   thuần túy vì hai setup dùng dataset khác nhau; leakage probe trên cùng dataset mới là bằng chứng cô lập chính.
+2. **Feature mới sạch có ích:** C cao hơn C_repo_only, ROC-AUC tăng khoảng 0,02–0,04 và PR-AUC tăng 0,04–0,07.
+3. **Feature contract chỉ giúp nhỏ và không nhất quán:** tốt hơn ở 1h/6h nhưng ROC-AUC thấp hơn ở 24h. Có thể do cách lấy selector xấp xỉ.
+4. **Đánh đổi của phát hiện sớm:** common-cohort cho thấy thêm thời gian có ích, nhưng operational coverage giảm mạnh
+   vì nhiều vụ rug đã xảy ra trước landmark (early_rug tăng từ 7.953 lên 13.161).
 5. **Độ tập trung LP** (`lp_top1_share`, `lp_hhi`) là tín hiệu mạnh và ổn định nhất qua mọi N.
 6. **Kẻ scam gần như luôn dùng ví deployer mới:** cold-start gần như trùng với D (chỉ 6 pool test có creator lặp lại), nên feature lịch sử creator ít tác dụng.
+7. **Không dùng missingness của ledger lỗi làm tín hiệu chính:** tám feature token holder bị loại khỏi protocol báo cáo chính.
 
 ---
 
 ## 8. Hạn chế và rủi ro
-- **Mẫu**, không phải toàn bộ: 600 pool/tháng trong tổng số khoảng 275k cặp WETH. Chỉ xét token deploy ≤ 7 ngày trước khi tạo pool.
+- **Mẫu có điều kiện**, không phải toàn bộ: 600 pool/tháng trong tổng số khoảng 275k cặp WETH và chỉ xét
+  token deploy ≤ 7 ngày trước khi tạo pool. Tỷ lệ rug 80,4% không phải prevalence của toàn Uniswap.
 - **Nhãn theo luật:** chưa bắt được honeypot (không bán được nhưng LP vẫn còn), rug chia nhỏ nhiều giao dịch (trừ khi bật `cumulative`), hay soft rug (dev bán dần).
-- **Tỉ lệ rug thay đổi theo thời gian:** train 71% rug, test 24–45%. Ngưỡng chọn trên val có thể lệch khi đem ra test.
+- **Tỉ lệ rug thay đổi theo thời gian:** train 51–72% tùy landmark, test 35–51%. Ngưỡng chọn trên val có thể lệch khi đem ra test.
 - **Danh sách locker còn ít**, nên `lp_locked_share` có thể bị đánh giá thấp.
-- **Selector lấy từ PUSH4** là cách xấp xỉ. `token_deployed_ts` được ước từ chênh lệch block × 12 giây.
+- **Selector lấy từ PUSH4** là cách xấp xỉ. Crawler mới ưu tiên `eth_getCode` tại block tạo pool và ghi cờ nếu
+  phải fallback sang `latest`; dữ liệu contract hiện có được crawl trước thay đổi này nên Setup D vẫn là kết quả phụ.
+  `token_deployed_ts` được ước từ chênh lệch block × 12 giây.
+- **Balance từ Transfer** có thể không phản ánh hoàn toàn rebasing/reflection/non-standard token. Pipeline đánh dấu ledger lỗi,
+  nhưng tỷ lệ lỗi 29,7–37,1% nên tám holder-share tương ứng bị loại khỏi protocol chính.
+- Nhãn 0 nghĩa là "không rug trong target horizon", không khẳng định token là benign vĩnh viễn.
 - Thời điểm deploy và creator lấy từ `getcontractcreation`. Token deploy qua factory thì creator là địa chỉ gửi giao dịch.
 
 ---
@@ -242,7 +292,7 @@ Dataset gốc có 90% mẫu là rug, nên accuracy và PR-AUC ở đây bị đ�
 # cài đặt
 py -3.12 -m venv .venv
 .venv\Scripts\python -m pip install -r requirements.txt
-.venv\Scripts\python -m pytest                      # 16 test
+.venv\Scripts\python -m pytest                      # 23 test
 
 # Setup A
 .venv\Scripts\python baseline\run_setup_a.py
@@ -257,11 +307,27 @@ py -3.12 -m venv .venv
 .venv\Scripts\python -m src.build_dataset
 
 # train
-.venv\Scripts\python -m src.train --config experiments/setup_B.yaml
-.venv\Scripts\python -m src.train --config experiments/setup_C.yaml
-.venv\Scripts\python -m src.train --config experiments/setup_D.yaml
+.venv\Scripts\python -m src.train --config experiments/setup_B_no_token_accounting.yaml
+.venv\Scripts\python -m src.train --config experiments/setup_C_no_token_accounting.yaml
+.venv\Scripts\python -m src.train --config experiments/setup_D_no_token_accounting.yaml
 .venv\Scripts\python -m src.train --config experiments/setup_C_repo_only.yaml
 .venv\Scripts\python -m src.train --config experiments/setup_D_coldstart.yaml
+.venv\Scripts\python -m src.train --config experiments/setup_D_template_coldstart.yaml
+.venv\Scripts\python -m src.train --config experiments/setup_C_common.yaml
+.venv\Scripts\python -m src.train --config experiments/setup_C_rolling.yaml
+.venv\Scripts\python -m src.build_dataset --config experiments/setup_C_label95.yaml --jobs 8
+.venv\Scripts\python -m src.train --config experiments/setup_C_label95.yaml
+.venv\Scripts\python -m src.build_dataset --config experiments/setup_C_cumulative99.yaml --jobs 8
+.venv\Scripts\python -m src.train --config experiments/setup_C_cumulative99.yaml
+
+# audit/robustness/reproducibility
+.venv\Scripts\python -m src.leakage_probe
+.venv\Scripts\python -m src.operational_eval
+.venv\Scripts\python -m src.label_sensitivity
+.venv\Scripts\python -m src.sample_label_audit
+.venv\Scripts\python -m src.data_quality
+.venv\Scripts\python -m src.paper_artifacts
+.venv\Scripts\python -m src.reproducibility
 ```
 
 Chạy thử không cần crawl: `python -m tests.synthetic`, rồi thêm `--data-root data/synthetic` vào `build_dataset` và `train`.
@@ -274,10 +340,11 @@ Chạy thử không cần crawl: `python -m tests.synthetic`, rồi thêm `--dat
 
 | Việc | Ưu tiên | Ghi chú |
 |---|---|---|
-| GNN trên transaction graph (Setup E) | cao | có trong topic. Đã có sẵn Transfer/Swap trong cửa sổ để dựng graph ví ↔ token. Dùng GraphSAGE/GIN (PyTorch Geometric) |
-| Đối chiếu nhãn với TokenSniffer | trung bình | lấy mẫu vài trăm token, đo mức khớp, chỉ dùng để kiểm chứng |
+| Hai người review hai phiếu blind trong `results/label_audit_reviewer_*.csv` | **bắt buộc trước submission** | 300 pool đã lấy mẫu phân tầng; hướng dẫn ở `paper/LABEL_AUDIT_GUIDE.md` |
+| Chạy `python -m src.label_audit_report` sau adjudication | **bắt buộc trước submission** | báo cáo agreement, Cohen's κ và false-positive của rule nhãn |
+| Literature matrix và citation baseline | **đã chuẩn bị** | `paper/LITERATURE_MATRIX.md`; baseline chỉ được trích như software artifact |
 | Bổ sung LP locker, kiểm chứng địa chỉ | trung bình | ảnh hưởng `lp_locked_share` |
-| Ablation `cumulative` và các ngưỡng 95%/99% | thấp | độ nhạy của nhãn |
-| Đánh giá kèm early_rug: recall trên toàn bộ vụ rug | trung bình | cho biết phát hiện sớm bắt được bao nhiêu % tổng số vụ rug |
+| Đối chiếu TokenSniffer/nguồn độc lập | trung bình | bổ sung cho manual label audit nếu API cho phép |
+| GNN trên transaction graph (Setup E) | tùy chọn | chỉ làm nếu có câu hỏi nghiên cứu khác biệt so với temporal-GNN hiện có |
 | Mở rộng sang BSC/PancakeSwap | thấp | cần nguồn dữ liệu khác |
-| Viết paper | chờ | luận điểm chính: A ảo, C thực, cái giá của việc chờ thêm |
+| Viết paper | đang sẵn sàng | có thể viết Method/Dataset; khóa Results sau khi hoàn tất manual label audit |

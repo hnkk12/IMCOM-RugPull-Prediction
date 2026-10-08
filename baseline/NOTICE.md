@@ -1,18 +1,23 @@
-# baseline/: nguồn gốc
+# baseline/: nguồn phần mềm tham chiếu
 
-Thư mục này chứa nguyên trạng code và dữ liệu của baseline (Setup A), lấy từ repo công khai
-`kangmyoungseok/RugPull_Prediction_AI` (KITRI BoB 10th, 2021). Đây cũng là nguồn của bài
-IMCOM về dự đoán rug pull trên Uniswap V2. Repo gốc **không kèm LICENSE**, nên mặc định mọi
-quyền vẫn thuộc nhóm tác giả gốc.
+Thư mục này lưu bản chụp code và dữ liệu của dự án công khai
+[`kangmyoungseok/RugPull-Prediction-AI`](https://github.com/kangmyoungseok/RugPull-Prediction-AI),
+được README của repository mô tả là dự án Team BOBAI tại KITRI Best of the Best lần thứ 10
+(09–12/2021). Repository gốc **không kèm LICENSE**; vì vậy mọi quyền vẫn thuộc nhóm tác giả gốc.
 
-- Khi viết báo cáo hoặc paper, cần trích dẫn bài báo và repo này làm baseline (Setup A).
-- Đừng public lại thư mục này (GitHub công khai, nộp kèm source) nếu chưa hỏi tác giả.
-  Code mới của dự án nằm trong `src/`, `data/sql/`, `experiments/`, `tests/` và không phụ thuộc thư mục này.
+Không có bằng chứng thư mục này là artifact của một bài IMCOM. Đã kiểm tra chương trình và mục lục
+proceedings IMCOM 2022 nhưng không tìm thấy bài rug-pull tương ứng. Cho đến khi tác giả xác nhận một
+ấn phẩm cụ thể, paper của dự án này chỉ được phép trích repository như **software artifact**; không tự
+gán tiêu đề bài báo, DOI hay venue IMCOM cho nó.
 
-Những gì đã chỉnh so với bản gốc:
-- Gỡ toàn bộ API key bị hardcode (Etherscan, Ethplorer, Bitquery). Các key này giờ đọc từ biến
-  môi trường `ETHERSCAN_API_KEY`, `ETHPLORER_API_KEY`, `BITQUERY_API_KEY`.
-- Xóa `__pycache__` và README gốc; đổi tên `requirements.txt` thành `requirements_original.txt`.
-- Thêm `run_setup_a.py` (tái lập Setup A cộng các phép thử leakage).
+- Khi viết paper, trích repository ở trên cho Setup A và ghi rõ ngày truy cập.
+- Không public lại thư mục này hoặc đưa nó vào supplementary material nếu chưa có sự cho phép của tác giả.
+  Code mới của dự án nằm trong `src/`, `data/sql/`, `experiments/` và `tests/`, không phụ thuộc thư mục này.
 
-Code crawl cũ (The Graph hosted service, Bitquery v1) đã ngừng hoạt động; chỉ giữ lại để tham khảo logic.
+Những thay đổi cục bộ so với bản gốc:
+
+- Gỡ API key hardcode (Etherscan, Ethplorer, Bitquery); các key được đọc từ biến môi trường.
+- Xóa cache và đổi tên `requirements.txt` thành `requirements_original.txt`.
+- Thêm `run_setup_a.py` để tái lập Setup A và chạy các phép thử leakage.
+
+Code crawl cũ dùng The Graph hosted service và Bitquery v1 đã ngừng hoạt động; chỉ giữ để tham khảo logic.

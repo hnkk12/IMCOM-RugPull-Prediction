@@ -12,6 +12,7 @@ joblib>=1.3
 pycryptodome>=3.20        # keccak for function selectors
 h5py>=3.10                # read the baseline ANN architecture
 pytest>=8
+requests>=2.31
 # crawling
 google-cloud-bigquery>=3.20
 google-cloud-bigquery-storage>=2.24

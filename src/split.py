@@ -53,6 +53,27 @@ def make_split(df: pd.DataFrame, spec: dict, h_days: float, seed: int):
     if kind == "random":
         return random_split(df, seed=seed, val_size=spec.get("val_size", 0.15), test_size=spec.get("test_size", 0.15))
     if kind == "temporal":
-        return temporal_split(df, spec["train_end"], spec["val_end"], spec.get("test_end"), h_days=h_days,
-                              purge=spec.get("purge", True), drop_seen_creators=spec.get("drop_seen_creators", False))
+        train, val, test = temporal_split(
+            df, spec["train_end"], spec["val_end"], spec.get("test_end"), h_days=h_days,
+            purge=spec.get("purge", True), drop_seen_creators=spec.get("drop_seen_creators", False))
+        if spec.get("drop_seen_templates"):
+            if "bytecode_hash" not in df:
+                raise ValueError("drop_seen_templates requires bytecode_hash in the processed dataset")
+            seen = set(train.bytecode_hash.dropna())
+            test = test[test.bytecode_hash.isna() | ~test.bytecode_hash.isin(seen)]
+        return train, val, test
     raise ValueError(kind)
+
+
+def make_splits(df: pd.DataFrame, spec: dict, h_days: float, seed: int):
+    """Return named splits; rolling_temporal expands to one result per configured fold."""
+    if spec.get("kind") != "rolling_temporal":
+        return [("main", *make_split(df, spec, h_days, seed))]
+    common = {k: v for k, v in spec.items() if k not in ("kind", "folds")}
+    out = []
+    for i, fold in enumerate(spec.get("folds", []), 1):
+        fspec = {**common, **fold, "kind": "temporal"}
+        out.append((fold.get("name", f"fold{i}"), *make_split(df, fspec, h_days, seed)))
+    if not out:
+        raise ValueError("rolling_temporal requires at least one split.folds entry")
+    return out

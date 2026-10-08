@@ -1,0 +1,5 @@
+# Robustness: remove all holder-share features that require exact token accounting.
+extends: setup_C.yaml
+name: C_no_token_accounting
+features: [robust]
+train: {models: [lgbm], shap: true}
